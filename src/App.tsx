@@ -228,6 +228,121 @@ function AnalyzeSummaryPanel({ data }: { data: any }) {
   )
 }
 
+function IssueList({ title, items }: { title: string; items?: any[] }) {
+  const list = items || []
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="text-sm font-semibold text-slate-900">{title}</div>
+      {list.length === 0 ? <div className="mt-2 text-sm text-slate-500">无</div> : (
+        <div className="mt-3 space-y-3">
+          {list.map((item, idx) => (
+            <div key={`${title}-${idx}`} className="rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm">
+              <div className="font-medium text-slate-900">{item.title || '-'}</div>
+              <div className="mt-1 space-y-1 text-slate-600">
+                {item.file ? <div>文件：{item.file}</div> : null}
+                {item.location ? <div>位置：{item.location}</div> : null}
+                {item.reason ? <div>原因：{item.reason}</div> : null}
+                {item.impact ? <div>影响：{item.impact}</div> : null}
+                {item.suggestion ? <div>建议：{item.suggestion}</div> : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function BulletSection({ title, items }: { title: string; items?: string[] }) {
+  const list = items || []
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="text-sm font-semibold text-slate-900">{title}</div>
+      {list.length === 0 ? <div className="mt-2 text-sm text-slate-500">无</div> : (
+        <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-700">
+          {list.map((item, idx) => <li key={`${title}-${idx}`}>{item}</li>)}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+function ReviewResultCard({ title, result }: { title: string; result?: any }) {
+  if (!result) return null
+
+  return (
+    <SectionCard title={title} desc="结构化审查结果。">
+      <div className="grid gap-3 md:grid-cols-4">
+        <SummaryChip label="模式" value={result.mode || '-'} />
+        <SummaryChip label="输入等级" value={result.input_level || '-'} />
+        <SummaryChip label="输入分数" value={result.input_score ?? '-'} />
+        <SummaryChip label="置信度" value={result.confidence || '-'} />
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+        <div className="text-sm font-semibold text-slate-900">总结</div>
+        <div className="mt-2 text-sm leading-6 text-slate-700">{result.summary || '暂无总结'}</div>
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        <IssueList title="高风险问题" items={result.high_risk} />
+        <IssueList title="中风险问题" items={result.medium_risk} />
+        <IssueList title="低风险优化建议" items={result.low_risk} />
+        <IssueList title="缺失测试场景" items={result.missing_tests} />
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        <BulletSection title="风险影响面" items={result.impact_scope} />
+        <BulletSection title="发布建议 / 人工确认项" items={result.release_checks} />
+      </div>
+    </SectionCard>
+  )
+}
+
+function AnalyzeReportPanel({ data }: { data: any }) {
+  if (!data) return null
+  return (
+    <div className="space-y-4">
+      <AnalyzeSummaryPanel data={data} />
+      <SectionCard title="Admission" desc="准入检查和上下文完整度。">
+        <div className="grid gap-3 md:grid-cols-4">
+          <SummaryChip label="是否通过" value={data.admission?.ok ? '通过' : '未通过'} />
+          <SummaryChip label="Level" value={data.admission?.level || '-'} />
+          <SummaryChip label="Score" value={data.admission?.score ?? '-'} />
+          <SummaryChip label="Confidence" value={data.admission?.confidence || '-'} />
+        </div>
+        <div className="mt-4 grid gap-4 xl:grid-cols-2">
+          <BulletSection title="缺失 P0" items={data.admission?.missing_p0} />
+          <BulletSection title="缺失 P1" items={data.admission?.missing_p1} />
+          <BulletSection title="Warnings" items={data.admission?.warnings} />
+          <BulletSection title="Suggestions" items={data.admission?.suggestions} />
+        </div>
+      </SectionCard>
+      <SectionCard title="Prompt Summary" desc="本次送给模型的上下文摘要。">
+        <div className="grid gap-3 md:grid-cols-5">
+          <SummaryChip label="Prompt OK" value={data.prompt?.ok ? '是' : '否'} />
+          <SummaryChip label="Prompt Score" value={data.prompt?.score ?? '-'} />
+          <SummaryChip label="文件数" value={data.prompt?.summary?.files?.length ?? 0} />
+          <SummaryChip label="上下文文件数" value={data.prompt?.summary?.context_files?.length ?? 0} />
+          <SummaryChip label="依赖扩展文件数" value={data.prompt?.summary?.dependency_context_files?.length ?? 0} />
+        </div>
+        <div className="mt-4 grid gap-4 xl:grid-cols-2">
+          <BulletSection title="Changed Files" items={data.prompt?.summary?.files} />
+          <BulletSection title="Dependency Context Files" items={data.prompt?.summary?.dependency_context_files} />
+        </div>
+      </SectionCard>
+      <ReviewResultCard title="Final Review" result={data.stage2 || data.review} />
+      <details className="rounded-2xl border border-slate-200 bg-white p-4">
+        <summary className="cursor-pointer text-sm font-semibold text-slate-900">展开中间过程</summary>
+        <div className="mt-4 space-y-4">
+          <ReviewResultCard title="Stage 1 Review" result={data.stage1} />
+          <ReviewResultCard title="Stage 2 Review" result={data.stage2} />
+        </div>
+      </details>
+    </div>
+  )
+}
+
 export default function App() {
   const [apiBase, setApiBase] = useState(DEFAULT_API_BASE)
   const [health, setHealth] = useState<unknown>(null)
@@ -558,8 +673,15 @@ export default function App() {
                 <button onClick={runAnalyze} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500">执行 Analyze</button>
               </div>
               <div className="mt-4 space-y-4">
-                <AnalyzeSummaryPanel data={analyzeResult} />
-                <ResultPanel title="Analyze Result" data={analyzeResult} loading={analyzeLoading} error={analyzeError} />
+                {analyzeLoading ? <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600">加载中...</div> : null}
+                {analyzeError ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{analyzeError}</div> : null}
+                {!analyzeLoading && !analyzeError ? <AnalyzeReportPanel data={analyzeResult} /> : null}
+                <details className="rounded-2xl border border-slate-200 bg-white p-4">
+                  <summary className="cursor-pointer text-sm font-semibold text-slate-900">查看原始 JSON</summary>
+                  <div className="mt-4">
+                    <ResultPanel title="Analyze Result" data={analyzeResult} loading={false} error={null} />
+                  </div>
+                </details>
               </div>
             </SectionCard>
 
