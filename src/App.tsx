@@ -15,7 +15,7 @@ type PromptArgs = {
   test_results: string[]
   jira?: string
   jira_base_url?: string
-  jira_provider: string
+  jira_provider: 'native' | 'command'
   jira_command?: string
   diff_file?: string | null
   context_files: string[]
@@ -51,6 +51,19 @@ type RunArgs = {
   context_file_max_bytes: number
 }
 
+type AnalyzeStrategy = 'standard' | 'deep'
+
+type AnalyzeArgs = {
+  git: string
+  repo: string
+  model?: string
+  strategy: AnalyzeStrategy
+  prompt: PromptArgs
+  include_context: boolean
+  context_budget_bytes: number
+  context_file_max_bytes: number
+}
+
 const defaultPromptArgs = (): PromptArgs => ({
   mode: 'standard',
   stack: 'Rust + Axum + PostgreSQL',
@@ -63,10 +76,10 @@ const defaultPromptArgs = (): PromptArgs => ({
   expected_edge: '网络重试不应双写',
   issue: '支付接口在网络重试下出现重复创建订单',
   test_results: ['订单单测通过'],
-  jira: '',
-  jira_base_url: '',
+  jira: undefined,
+  jira_base_url: undefined,
   jira_provider: 'native',
-  jira_command: '',
+  jira_command: undefined,
   diff_file: null,
   context_files: [],
   files: ['src/api.rs'],
@@ -83,6 +96,39 @@ function splitLines(value: string) {
     .filter(Boolean)
 }
 
+function cleanOptional(value?: string | null) {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : undefined
+}
+
+function sanitizePromptArgs(args: PromptArgs): PromptArgs {
+  const jira = cleanOptional(args.jira)
+  const jiraProvider = jira ? args.jira_provider : 'native'
+
+  return {
+    ...args,
+    stack: cleanOptional(args.stack),
+    goal: cleanOptional(args.goal),
+    why: cleanOptional(args.why),
+    expected_normal: cleanOptional(args.expected_normal),
+    expected_error: cleanOptional(args.expected_error),
+    expected_edge: cleanOptional(args.expected_edge),
+    issue: cleanOptional(args.issue),
+    jira,
+    jira_base_url: jira && jiraProvider === 'native' ? cleanOptional(args.jira_base_url) : undefined,
+    jira_provider: jiraProvider,
+    jira_command: jira && jiraProvider === 'command' ? cleanOptional(args.jira_command) : undefined,
+    change_type: cleanOptional(args.change_type),
+    diff_file: cleanOptional(args.diff_file),
+    context_files: args.context_files.map((v) => v.trim()).filter(Boolean),
+    files: args.files.map((v) => v.trim()).filter(Boolean),
+    focus: args.focus.map((v) => v.trim()).filter(Boolean),
+    baseline_files: args.baseline_files.map((v) => v.trim()).filter(Boolean),
+    rules: args.rules.map((v) => v.trim()).filter(Boolean),
+    risks: args.risks.map((v) => v.trim()).filter(Boolean),
+    test_results: args.test_results.map((v) => v.trim()).filter(Boolean),
+  }
+}
 
 function SectionCard({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
   return (
@@ -113,12 +159,8 @@ function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
 }
 
 function formatUiError(error: unknown) {
-  if (error instanceof ApiClientError) {
-    return error.message
-  }
-  if (error instanceof Error) {
-    return error.message
-  }
+  if (error instanceof ApiClientError) return error.message
+  if (error instanceof Error) return error.message
   return '请求失败，请稍后再试。'
 }
 
@@ -132,12 +174,8 @@ function ResultPanel({ title, data, loading, error }: { title: string; data: unk
     <SectionCard title={title} desc="这里显示接口返回的 JSON / 文本结果。">
       {loading ? <div className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600">加载中...</div> : null}
       {error ? <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div> : null}
-      {!loading && !error && !pretty ? (
-        <div className="rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">还没有结果，先提交一个请求吧。</div>
-      ) : null}
-      {pretty ? (
-        <pre className="overflow-x-auto rounded-2xl bg-slate-950 p-4 text-xs leading-6 text-slate-100">{pretty}</pre>
-      ) : null}
+      {!loading && !error && !pretty ? <div className="rounded-xl border border-dashed border-slate-300 px-4 py-8 text-center text-sm text-slate-500">还没有结果，先提交一个请求吧。</div> : null}
+      {pretty ? <pre className="overflow-x-auto rounded-2xl bg-slate-950 p-4 text-xs leading-6 text-slate-100">{pretty}</pre> : null}
     </SectionCard>
   )
 }
@@ -175,7 +213,7 @@ export default function App() {
     git: 'HEAD~1..HEAD',
     repo: '/home/delta/workspace/ai/code-review',
     model: 'gpt-5.4',
-    prompt: { ...defaultPromptArgs(), mode: 'critical', focus: ['支付安全', '事务一致性'] },
+    prompt: { ...defaultPromptArgs(), mode: 'critical', focus: ['接口契约', '事务一致性'] },
     include_context: true,
     context_budget_bytes: 48000,
     context_file_max_bytes: 12000,
@@ -196,14 +234,29 @@ export default function App() {
   const [runLoading, setRunLoading] = useState(false)
   const [runError, setRunError] = useState<string | null>(null)
 
+  const [analyzeArgs, setAnalyzeArgs] = useState<AnalyzeArgs>({
+    git: 'HEAD~1..HEAD',
+    repo: '/home/delta/workspace/ai/code-review',
+    model: 'gpt-5.4',
+    strategy: 'deep',
+    prompt: { ...defaultPromptArgs(), mode: 'critical', focus: ['接口契约', '事务一致性'] },
+    include_context: true,
+    context_budget_bytes: 48000,
+    context_file_max_bytes: 12000,
+  })
+  const [analyzeResult, setAnalyzeResult] = useState<unknown>(null)
+  const [analyzeLoading, setAnalyzeLoading] = useState(false)
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null)
+
   const syncPromptArgs = (patch: Partial<PromptArgs>) => {
     const next = { ...promptArgs, ...patch }
     setPromptArgs(next)
     setRunArgs((prev) => ({ ...prev, prompt: next }))
     setDeepArgs((prev) => ({ ...prev, prompt: { ...prev.prompt, ...patch } }))
+    setAnalyzeArgs((prev) => ({ ...prev, prompt: { ...prev.prompt, ...patch } }))
   }
 
-  const buildPromptArgsFromLines = (base: PromptArgs): PromptArgs => ({
+  const buildPromptArgsFromLines = (base: PromptArgs): PromptArgs => sanitizePromptArgs({
     ...base,
     rules: splitLines(promptLines.rules),
     risks: splitLines(promptLines.risks),
@@ -218,8 +271,7 @@ export default function App() {
     setHealthLoading(true)
     setHealthError(null)
     try {
-      const data = await fetchJson(apiBase, '/api/health')
-      setHealth(data)
+      setHealth(await fetchJson(apiBase, '/api/health'))
     } catch (error) {
       setHealthError(formatUiError(error))
     } finally {
@@ -231,11 +283,9 @@ export default function App() {
     setPromptLoading(true)
     setPromptError(null)
     try {
-      const body = buildPromptArgsFromLines(promptArgs)
-      const data = await fetchJson(apiBase, '/api/prompt', body)
-      setPromptResult(data)
+      setPromptResult(await fetchJson(apiBase, '/api/prompt', buildPromptArgsFromLines(promptArgs)))
     } catch (error) {
-      setPromptError(error instanceof Error ? error.message : '请求失败')
+      setPromptError(formatUiError(error))
     } finally {
       setPromptLoading(false)
     }
@@ -245,12 +295,8 @@ export default function App() {
     setReviewLoading(true)
     setReviewError(null)
     try {
-      const body: ReviewArgs = {
-        model: reviewModel,
-        prompt_args: buildPromptArgsFromLines(promptArgs),
-      }
-      const data = await fetchJson(apiBase, '/api/review', body)
-      setReviewResult(data)
+      const body: ReviewArgs = { model: reviewModel, prompt_args: buildPromptArgsFromLines(promptArgs) }
+      setReviewResult(await fetchJson(apiBase, '/api/review', body))
     } catch (error) {
       setReviewError(formatUiError(error))
     } finally {
@@ -262,14 +308,10 @@ export default function App() {
     setDeepLoading(true)
     setDeepError(null)
     try {
-      const body: DeepReviewArgs = {
-        ...deepArgs,
-        prompt: buildPromptArgsFromLines({ ...deepArgs.prompt, mode: 'critical' }),
-      }
-      const data = await fetchJson(apiBase, '/api/deep-review', body)
-      setDeepResult(data)
+      const body: DeepReviewArgs = { ...deepArgs, prompt: buildPromptArgsFromLines({ ...deepArgs.prompt, mode: 'critical' }) }
+      setDeepResult(await fetchJson(apiBase, '/api/deep-review', body))
     } catch (error) {
-      setDeepError(error instanceof Error ? error.message : '请求失败')
+      setDeepError(formatUiError(error))
     } finally {
       setDeepLoading(false)
     }
@@ -279,12 +321,8 @@ export default function App() {
     setRunLoading(true)
     setRunError(null)
     try {
-      const body: RunArgs = {
-        ...runArgs,
-        prompt: buildPromptArgsFromLines(runArgs.prompt),
-      }
-      const data = await fetchJson(apiBase, '/api/run', body)
-      setRunResult(data)
+      const body: RunArgs = { ...runArgs, prompt: buildPromptArgsFromLines(runArgs.prompt) }
+      setRunResult(await fetchJson(apiBase, '/api/run', body))
     } catch (error) {
       setRunError(formatUiError(error))
     } finally {
@@ -292,12 +330,24 @@ export default function App() {
     }
   }
 
+  const runAnalyze = async () => {
+    setAnalyzeLoading(true)
+    setAnalyzeError(null)
+    try {
+      const body: AnalyzeArgs = { ...analyzeArgs, prompt: buildPromptArgsFromLines(analyzeArgs.prompt) }
+      setAnalyzeResult(await fetchJson(apiBase, '/api/analyze', body))
+    } catch (error) {
+      setAnalyzeError(formatUiError(error))
+    } finally {
+      setAnalyzeLoading(false)
+    }
+  }
+
   const loadModels = async () => {
     setModelsLoading(true)
     setModelsError(null)
     try {
-      const data = await fetchJson(apiBase, '/api/models')
-      setModels(data)
+      setModels(await fetchJson(apiBase, '/api/models'))
     } catch (error) {
       setModelsError(formatUiError(error))
     } finally {
@@ -312,8 +362,7 @@ export default function App() {
           <p className="text-sm uppercase tracking-[0.24em] text-slate-400">code-review frontend</p>
           <h1 className="mt-3 text-3xl font-semibold sm:text-4xl">HTTP API Control Panel</h1>
           <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300 sm:text-base">
-            基于 React + TypeScript + Tailwind + Vite 的本地前端，用来调用 code-review HTTP API。
-            适合开发、联调和查看结构化 review 结果。
+            基于 React + TypeScript + Tailwind + Vite 的本地前端，用来调用 code-review HTTP API。适合开发、联调和查看结构化 review 结果。
           </p>
           <div className="mt-5 grid gap-3 md:grid-cols-[1fr_auto_auto]">
             <TextInput value={apiBase} onChange={(e) => setApiBase(e.target.value)} className="border-slate-700 bg-slate-900 text-white focus:border-slate-400 focus:ring-slate-700" />
@@ -373,6 +422,30 @@ export default function App() {
                   <TextInput value={promptArgs.issue || ''} onChange={(e) => syncPromptArgs({ issue: e.target.value })} />
                 </div>
                 <div>
+                  <FieldLabel>Jira Issue Key</FieldLabel>
+                  <TextInput placeholder="比如 CR-123 / PROJ-456" value={promptArgs.jira || ''} onChange={(e) => syncPromptArgs({ jira: e.target.value })} />
+                </div>
+                <div>
+                  <FieldLabel>Jira Provider</FieldLabel>
+                  <Select value={promptArgs.jira_provider} onChange={(e) => syncPromptArgs({ jira_provider: e.target.value as PromptArgs['jira_provider'] })}>
+                    <option value="native">native</option>
+                    <option value="command">command</option>
+                  </Select>
+                </div>
+                {promptArgs.jira ? (
+                  promptArgs.jira_provider === 'native' ? (
+                    <div className="md:col-span-2">
+                      <FieldLabel>Jira Base URL</FieldLabel>
+                      <TextInput placeholder="https://jira.example.com" value={promptArgs.jira_base_url || ''} onChange={(e) => syncPromptArgs({ jira_base_url: e.target.value })} />
+                    </div>
+                  ) : (
+                    <div className="md:col-span-2">
+                      <FieldLabel>Jira Command</FieldLabel>
+                      <TextInput placeholder="your-command --issue {issue}" value={promptArgs.jira_command || ''} onChange={(e) => syncPromptArgs({ jira_command: e.target.value })} />
+                    </div>
+                  )
+                ) : null}
+                <div>
                   <FieldLabel>Expected Normal</FieldLabel>
                   <TextInput value={promptArgs.expected_normal || ''} onChange={(e) => syncPromptArgs({ expected_normal: e.target.value })} />
                 </div>
@@ -412,6 +485,32 @@ export default function App() {
                   <FieldLabel>Baseline Files（每行一条）</FieldLabel>
                   <TextArea value={promptLines.baseline_files} onChange={(e) => setPromptLines((prev) => ({ ...prev, baseline_files: e.target.value }))} />
                 </div>
+              </div>
+            </SectionCard>
+
+            <SectionCard title="一键分析 Analyze" desc="调用 /api/analyze，一次完成准入检查、prompt 生成、LLM 审查和最终报告输出。">
+              <div className="grid gap-4 md:grid-cols-3">
+                <div>
+                  <FieldLabel>Git Range</FieldLabel>
+                  <TextInput value={analyzeArgs.git} onChange={(e) => setAnalyzeArgs((prev) => ({ ...prev, git: e.target.value }))} />
+                </div>
+                <div>
+                  <FieldLabel>Repo</FieldLabel>
+                  <TextInput value={analyzeArgs.repo} onChange={(e) => setAnalyzeArgs((prev) => ({ ...prev, repo: e.target.value }))} />
+                </div>
+                <div>
+                  <FieldLabel>Strategy</FieldLabel>
+                  <Select value={analyzeArgs.strategy} onChange={(e) => setAnalyzeArgs((prev) => ({ ...prev, strategy: e.target.value as AnalyzeStrategy }))}>
+                    <option value="standard">standard</option>
+                    <option value="deep">deep</option>
+                  </Select>
+                </div>
+              </div>
+              <div className="mt-4 flex gap-3">
+                <button onClick={runAnalyze} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500">执行 Analyze</button>
+              </div>
+              <div className="mt-4">
+                <ResultPanel title="Analyze Result" data={analyzeResult} loading={analyzeLoading} error={analyzeError} />
               </div>
             </SectionCard>
 
@@ -486,7 +585,8 @@ export default function App() {
                 <li>1. 先启动后端：<code className="rounded bg-slate-100 px-1 py-0.5 text-xs">cargo run -- serve</code></li>
                 <li>2. 如果要执行 review / deep-review，记得先做本机 <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">code-review auth login</code></li>
                 <li>3. Review / Deep Review 是同步接口，调用可能较慢。</li>
-                <li>4. 默认 API 地址写死为 <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">http://127.0.0.1:3000</code>，后面可以再做环境变量配置。</li>
+                <li>4. 开发环境默认走同源 <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">/api</code>，由 Vite 代理到 <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">http://127.0.0.1:3000</code>，这样就不会触发浏览器 CORS 问题。</li>
+                <li>5. 只有在填了 Jira Issue Key 之后，前端才会把 Jira 相关参数发给后端。</li>
               </ul>
             </SectionCard>
           </div>
