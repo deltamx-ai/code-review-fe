@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { ApiClientError, DEFAULT_API_BASE, fetchJson } from './lib/api'
 
 type PromptArgs = {
   mode: 'lite' | 'standard' | 'critical'
@@ -50,8 +51,6 @@ type RunArgs = {
   context_file_max_bytes: number
 }
 
-const API_BASE = 'http://127.0.0.1:3000'
-
 const defaultPromptArgs = (): PromptArgs => ({
   mode: 'standard',
   stack: 'Rust + Axum + PostgreSQL',
@@ -70,7 +69,7 @@ const defaultPromptArgs = (): PromptArgs => ({
   jira_command: '',
   diff_file: null,
   context_files: [],
-  files: ['src/order/service.rs'],
+  files: ['src/api.rs'],
   focus: [],
   baseline_files: [],
   change_type: 'server',
@@ -84,20 +83,6 @@ function splitLines(value: string) {
     .filter(Boolean)
 }
 
-async function fetchJson<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: body ? 'POST' : 'GET',
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
-  })
-
-  const text = await response.text()
-  const data = text ? JSON.parse(text) : null
-  if (!response.ok) {
-    throw new Error(data?.error || `HTTP ${response.status}`)
-  }
-  return data as T
-}
 
 function SectionCard({ title, desc, children }: { title: string; desc?: string; children: React.ReactNode }) {
   return (
@@ -127,6 +112,16 @@ function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return <select {...props} className={`w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-slate-500 focus:ring-2 focus:ring-slate-200 ${props.className || ''}`} />
 }
 
+function formatUiError(error: unknown) {
+  if (error instanceof ApiClientError) {
+    return error.message
+  }
+  if (error instanceof Error) {
+    return error.message
+  }
+  return '请求失败，请稍后再试。'
+}
+
 function ResultPanel({ title, data, loading, error }: { title: string; data: unknown; loading: boolean; error: string | null }) {
   const pretty = useMemo(() => {
     if (data == null) return ''
@@ -148,7 +143,11 @@ function ResultPanel({ title, data, loading, error }: { title: string; data: unk
 }
 
 export default function App() {
+  const [apiBase, setApiBase] = useState(DEFAULT_API_BASE)
   const [health, setHealth] = useState<unknown>(null)
+  const [models, setModels] = useState<unknown>(null)
+  const [modelsLoading, setModelsLoading] = useState(false)
+  const [modelsError, setModelsError] = useState<string | null>(null)
   const [healthLoading, setHealthLoading] = useState(false)
   const [healthError, setHealthError] = useState<string | null>(null)
 
@@ -219,10 +218,10 @@ export default function App() {
     setHealthLoading(true)
     setHealthError(null)
     try {
-      const data = await fetchJson('/api/health')
+      const data = await fetchJson(apiBase, '/api/health')
       setHealth(data)
     } catch (error) {
-      setHealthError(error instanceof Error ? error.message : '请求失败')
+      setHealthError(formatUiError(error))
     } finally {
       setHealthLoading(false)
     }
@@ -233,7 +232,7 @@ export default function App() {
     setPromptError(null)
     try {
       const body = buildPromptArgsFromLines(promptArgs)
-      const data = await fetchJson('/api/prompt', body)
+      const data = await fetchJson(apiBase, '/api/prompt', body)
       setPromptResult(data)
     } catch (error) {
       setPromptError(error instanceof Error ? error.message : '请求失败')
@@ -250,10 +249,10 @@ export default function App() {
         model: reviewModel,
         prompt_args: buildPromptArgsFromLines(promptArgs),
       }
-      const data = await fetchJson('/api/review', body)
+      const data = await fetchJson(apiBase, '/api/review', body)
       setReviewResult(data)
     } catch (error) {
-      setReviewError(error instanceof Error ? error.message : '请求失败')
+      setReviewError(formatUiError(error))
     } finally {
       setReviewLoading(false)
     }
@@ -267,7 +266,7 @@ export default function App() {
         ...deepArgs,
         prompt: buildPromptArgsFromLines({ ...deepArgs.prompt, mode: 'critical' }),
       }
-      const data = await fetchJson('/api/deep-review', body)
+      const data = await fetchJson(apiBase, '/api/deep-review', body)
       setDeepResult(data)
     } catch (error) {
       setDeepError(error instanceof Error ? error.message : '请求失败')
@@ -284,12 +283,25 @@ export default function App() {
         ...runArgs,
         prompt: buildPromptArgsFromLines(runArgs.prompt),
       }
-      const data = await fetchJson('/api/run', body)
+      const data = await fetchJson(apiBase, '/api/run', body)
       setRunResult(data)
     } catch (error) {
-      setRunError(error instanceof Error ? error.message : '请求失败')
+      setRunError(formatUiError(error))
     } finally {
       setRunLoading(false)
+    }
+  }
+
+  const loadModels = async () => {
+    setModelsLoading(true)
+    setModelsError(null)
+    try {
+      const data = await fetchJson(apiBase, '/api/models')
+      setModels(data)
+    } catch (error) {
+      setModelsError(formatUiError(error))
+    } finally {
+      setModelsLoading(false)
     }
   }
 
@@ -303,17 +315,24 @@ export default function App() {
             基于 React + TypeScript + Tailwind + Vite 的本地前端，用来调用 code-review HTTP API。
             适合开发、联调和查看结构化 review 结果。
           </p>
+          <div className="mt-5 grid gap-3 md:grid-cols-[1fr_auto_auto]">
+            <TextInput value={apiBase} onChange={(e) => setApiBase(e.target.value)} className="border-slate-700 bg-slate-900 text-white focus:border-slate-400 focus:ring-slate-700" />
+            <button onClick={checkHealth} className="rounded-xl bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20">Health</button>
+            <button onClick={loadModels} className="rounded-xl bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20">Models</button>
+          </div>
         </header>
 
         <div className="grid gap-6 xl:grid-cols-[1.2fr_1fr]">
           <div className="space-y-6">
-            <SectionCard title="服务状态" desc={`默认 API Base：${API_BASE}`}>
+            <SectionCard title="服务状态" desc={`当前 API Base：${apiBase || '同源 /api（Vite 代理到 127.0.0.1:3000）'}`}>
               <div className="flex flex-wrap items-center gap-3">
                 <button onClick={checkHealth} className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700">检查健康状态</button>
+                <button onClick={loadModels} className="rounded-xl bg-slate-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-600">拉取模型列表</button>
                 <span className="text-sm text-slate-500">启动后端：cargo run -- serve</span>
               </div>
-              <div className="mt-4">
+              <div className="mt-4 grid gap-4 xl:grid-cols-2">
                 <ResultPanel title="健康检查结果" data={health} loading={healthLoading} error={healthError} />
+                <ResultPanel title="模型列表" data={models} loading={modelsLoading} error={modelsError} />
               </div>
             </SectionCard>
 
