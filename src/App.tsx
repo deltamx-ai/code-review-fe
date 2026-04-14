@@ -180,6 +180,54 @@ function ResultPanel({ title, data, loading, error }: { title: string; data: unk
   )
 }
 
+function SummaryChip({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="mt-1 font-medium text-slate-900">{value}</div>
+    </div>
+  )
+}
+
+function AnalyzeSummaryPanel({ data }: { data: any }) {
+  if (!data) return null
+
+  const prompt = data.prompt?.summary
+  const review = data.review
+  const stage2 = data.stage2
+  const finalResult = stage2 || review
+
+  return (
+    <SectionCard title="Analyze 摘要" desc="把准入、Prompt、最终结论拆开看。">
+      <div className="grid gap-3 md:grid-cols-4">
+        <SummaryChip label="策略" value={data.strategy || '-'} />
+        <SummaryChip label="准入" value={data.admission?.ok ? '通过' : '未通过'} />
+        <SummaryChip label="Prompt 分数" value={data.prompt?.score ?? '-'} />
+        <SummaryChip label="Exit Code" value={data.exit_code ?? '-'} />
+      </div>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <SummaryChip label="目标" value={prompt?.goal || '-'} />
+        <SummaryChip label="技术栈" value={prompt?.stack || '-'} />
+        <SummaryChip label="涉及文件数" value={Array.isArray(prompt?.files) ? prompt.files.length : 0} />
+        <SummaryChip label="上下文文件数" value={Array.isArray(prompt?.context_files) ? prompt.context_files.length : 0} />
+      </div>
+
+      {finalResult ? (
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+          <div className="text-sm font-semibold text-slate-900">最终结论</div>
+          <div className="mt-2 text-sm leading-6 text-slate-700">{finalResult.summary || '暂无总结'}</div>
+          <div className="mt-3 grid gap-3 md:grid-cols-3">
+            <SummaryChip label="高风险" value={finalResult.high_risk?.length ?? 0} />
+            <SummaryChip label="中风险" value={finalResult.medium_risk?.length ?? 0} />
+            <SummaryChip label="缺失测试" value={finalResult.missing_tests?.length ?? 0} />
+          </div>
+        </div>
+      ) : null}
+    </SectionCard>
+  )
+}
+
 export default function App() {
   const [apiBase, setApiBase] = useState(DEFAULT_API_BASE)
   const [health, setHealth] = useState<unknown>(null)
@@ -509,7 +557,8 @@ export default function App() {
               <div className="mt-4 flex gap-3">
                 <button onClick={runAnalyze} className="rounded-xl bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500">执行 Analyze</button>
               </div>
-              <div className="mt-4">
+              <div className="mt-4 space-y-4">
+                <AnalyzeSummaryPanel data={analyzeResult} />
                 <ResultPanel title="Analyze Result" data={analyzeResult} loading={analyzeLoading} error={analyzeError} />
               </div>
             </SectionCard>
