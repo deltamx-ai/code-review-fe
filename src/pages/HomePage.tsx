@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
-import { ApiClientError, DEFAULT_API_BASE, fetchJson } from './lib/api'
+import { ApiClientError, fetchJson } from '../lib/api'
+import { useApiBase } from '../lib/apiBase'
 
 type PromptArgs = {
   mode: 'lite' | 'standard' | 'critical'
@@ -343,8 +344,8 @@ function AnalyzeReportPanel({ data }: { data: any }) {
   )
 }
 
-export default function App() {
-  const [apiBase, setApiBase] = useState(DEFAULT_API_BASE)
+export default function HomePage() {
+  const { apiBase } = useApiBase()
   const [health, setHealth] = useState<unknown>(null)
   const [models, setModels] = useState<unknown>(null)
   const [modelsLoading, setModelsLoading] = useState(false)
@@ -519,22 +520,8 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900">
-      <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
-        <header className="mb-8 rounded-3xl bg-slate-950 px-6 py-8 text-white shadow-xl">
-          <p className="text-sm uppercase tracking-[0.24em] text-slate-400">code-review frontend</p>
-          <h1 className="mt-3 text-3xl font-semibold sm:text-4xl">HTTP API Control Panel</h1>
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-300 sm:text-base">
-            基于 React + TypeScript + Tailwind + Vite 的本地前端，用来调用 code-review HTTP API。适合开发、联调和查看结构化 review 结果。
-          </p>
-          <div className="mt-5 grid gap-3 md:grid-cols-[1fr_auto_auto]">
-            <TextInput value={apiBase} onChange={(e) => setApiBase(e.target.value)} className="border-slate-700 bg-slate-900 text-white focus:border-slate-400 focus:ring-slate-700" />
-            <button onClick={checkHealth} className="rounded-xl bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20">Health</button>
-            <button onClick={loadModels} className="rounded-xl bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20">Models</button>
-          </div>
-        </header>
-
-        <div className="grid gap-6 xl:grid-cols-[1.2fr_1fr]">
+    <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <div className="grid gap-6 xl:grid-cols-[1.2fr_1fr]">
           <div className="space-y-6">
             <SectionCard title="服务状态" desc={`当前 API Base：${apiBase || '同源 /api（Vite 代理到 127.0.0.1:3000）'}`}>
               <div className="flex flex-wrap items-center gap-3">
@@ -762,7 +749,6 @@ export default function App() {
             </SectionCard>
           </div>
         </div>
-      </div>
     </div>
   )
 }
